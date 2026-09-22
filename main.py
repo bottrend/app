@@ -7,8 +7,8 @@ import requests
 app=Flask(__name__)
 lock=threading.Lock()
 OKX_BASE="https://www.okx.com"
-INST_ID=os.getenv("INST_ID","BTC-USDT")
-STEP=float(os.getenv("GRID_STEP","0.005"))
+INST_ID=os.getenv("INST_ID","OP-USDT")
+STEP=float(os.getenv("GRID_STEP","0.01"))
 TRADE_USD=float(os.getenv("TRADE_USD","2"))
 POLL_SECONDS=int(os.getenv("POLL_SECONDS","5"))
 LIVE_ENABLED=os.getenv("LIVE_TRADING_ENABLED","false").lower()=="true"
@@ -16,7 +16,7 @@ API_KEY=os.getenv("OKX_API_KEY","")
 SECRET_KEY=os.getenv("OKX_SECRET_KEY","")
 PASSPHRASE=os.getenv("OKX_PASSPHRASE","")
 
-state={"price":None,"anchor":None,"account_btc":0.0,"account_usdt":0.0,"trades":0,"buys":0,"sells":0,
+state={"price":None,"anchor":None,"account_op":0.0,"account_usdt":0.0,"trades":0,"buys":0,"sells":0,
 "last_trade":None,"started":None,"error":None,"api_ok":False,"mode":"OKX LIVE SPOT","armed":LIVE_ENABLED}
 
 def iso_ts():
@@ -45,15 +45,15 @@ def market_price():
     return float(okx_request("GET","/api/v5/market/ticker",{"instId":INST_ID})["data"][0]["last"])
 
 def balances():
-    d=okx_request("GET","/api/v5/account/balance",{"ccy":"BTC,USDT"},auth=True)
-    btc=usdt=0.0
+    d=okx_request("GET","/api/v5/account/balance",{"ccy":"OP,USDT"},auth=True)
+    op=usdt=0.0
     for x in d["data"][0].get("details",[]):
-        if x["ccy"]=="BTC": btc=float(x.get("availBal") or x.get("cashBal") or 0)
+        if x["ccy"]=="OP": op=float(x.get("availBal") or x.get("cashBal") or 0)
         if x["ccy"]=="USDT": usdt=float(x.get("availBal") or x.get("cashBal") or 0)
-    return btc,usdt
+    return op,usdt
 
 def refresh_balances():
-    btc,usdt=balances(); state["account_btc"]=btc; state["account_usdt"]=usdt; return btc,usdt
+    op,usdt=balances(); state["account_op"]=op; state["account_usdt"]=usdt; return op,usdt
 
 def order_usd(px):
     min_sz,_=instrument_rules()
@@ -74,9 +74,9 @@ def place_market(side,usd,px):
     return item.get("ordId")
 
 def execute(side,level):
-    btc,usdt=refresh_balances(); usd=order_usd(level)
+    op,usdt=refresh_balances(); usd=order_usd(level)
     if side=="BUY" and usdt<usd: raise RuntimeError("Insufficient LIVE USDT")
-    if side=="SELL" and btc*level<usd: raise RuntimeError("Insufficient LIVE BTC")
+    if side=="SELL" and op*level<usd: raise RuntimeError("Insufficient LIVE BTC")
     oid=place_market(side.lower(),usd,level)
     time.sleep(1); refresh_balances()
     state["trades"]+=1; state["buys"]+=side=="BUY"; state["sells"]+=side=="SELL"; state["anchor"]=level
@@ -116,12 +116,12 @@ def health(): return {"ok":True,"mode":"OKX_LIVE","apiConfigured":bool(API_KEY a
 
 HTML="""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OKX LIVE Grid</title>
 <style>body{margin:0;background:#080b12;color:#eaf0ff;font-family:system-ui}.wrap{max-width:900px;margin:auto;padding:20px}.card{background:#111724;border:1px solid #222d42;border-radius:12px;padding:14px;margin-top:12px}.v{font-size:22px;font-weight:700}.ok{color:#4ade80}.bad{color:#fb7185}.muted{color:#8d98ad}</style></head>
-<body><div class="wrap"><h2>BTC 0.5% GRID · OKX LIVE</h2><div class="muted">LIVE SPOT · target $2/order · 0.5% grid · 5s polling</div><div id="x" class="card">Loading...</div></div>
+<body><div class="wrap"><h2>OP 1% GRID · OKX LIVE</h2><div class="muted">LIVE SPOT · target $2/order · 1% grid · 5s polling</div><div id="x" class="card">Loading...</div></div>
 <script>const n=(x,d=2)=>x==null?'N/A':Number(x).toLocaleString(undefined,{maximumFractionDigits:d});
 async function go(){let s=await(await fetch('/api',{cache:'no-store'})).json();document.getElementById('x').innerHTML=
 '<div class="v '+(s.api_ok?'ok':'bad')+'">'+(s.api_ok?'API CONNECTED':'WAITING FOR API')+'</div>'+
 '<p>Trading: <b class="'+(s.armed?'ok':'bad')+'">'+(s.armed?'LIVE ENABLED':'SAFETY LOCKED')+'</b></p>'+
-'<p>BTC $'+n(s.price)+' · Anchor $'+n(s.anchor)+'</p><p>Available BTC '+n(s.account_btc,8)+' · USDT '+n(s.account_usdt,4)+'</p>'+
+'<p>BTC $'+n(s.price)+' · Anchor $'+n(s.anchor)+'</p><p>Available OP '+n(s.account_op,8)+' · USDT '+n(s.account_usdt,4)+'</p>'+
 '<p>Orders '+s.trades+' · BUY '+s.buys+' · SELL '+s.sells+'</p><small class="muted">'+(s.error||'Ready')+'</small>'}go();setInterval(go,5000)</script></body></html>"""
 @app.get("/")
 def home(): return render_template_string(HTML)
