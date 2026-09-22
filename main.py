@@ -8,7 +8,8 @@ lock=threading.Lock()
 
 START_TOTAL=200.0
 START_USDT=100.0
-TRADE_USD=10.0
+TRADE_PCT=0.10
+MIN_TRADE_USD=2.0
 STEP=0.005
 FEE_RATE=0.001
 
@@ -26,23 +27,27 @@ def init(px):
     state["started"]=datetime.now(timezone.utc).isoformat()
 
 def sell(px):
-    qty=TRADE_USD/px
-    if state["btc"]+1e-15 < qty: return
-    fee=TRADE_USD*FEE_RATE
+    trade_usd=(state["btc"]*px)*TRADE_PCT
+    if trade_usd < MIN_TRADE_USD: return
+    qty=trade_usd/px
+    fee=trade_usd*FEE_RATE
     state["btc"]-=qty
-    state["usdt"]+=TRADE_USD-fee
+    state["usdt"]+=trade_usd-fee
     state["fees"]+=fee; state["trades"]+=1; state["sells"]+=1
     state["anchor"]=px
-    state["last_trade"]={"side":"SELL","price":px,"usd":TRADE_USD,"fee":fee,"time":datetime.now(timezone.utc).isoformat()}
+    state["last_trade"]={"side":"SELL","price":px,"usd":trade_usd,"fee":fee,"time":datetime.now(timezone.utc).isoformat()}
 
 def buy(px):
-    fee=TRADE_USD*FEE_RATE
-    if state["usdt"]+1e-12 < TRADE_USD+fee: return
-    state["usdt"]-=TRADE_USD+fee
-    state["btc"]+=TRADE_USD/px
+    # Use 10% of current USDT while charging the fee inside that budget.
+    trade_usd=state["usdt"]*TRADE_PCT
+    if trade_usd < MIN_TRADE_USD: return
+    fee=trade_usd*FEE_RATE
+    net_btc_usd=trade_usd-fee
+    state["usdt"]-=trade_usd
+    state["btc"]+=net_btc_usd/px
     state["fees"]+=fee; state["trades"]+=1; state["buys"]+=1
     state["anchor"]=px
-    state["last_trade"]={"side":"BUY","price":px,"usd":TRADE_USD,"fee":fee,"time":datetime.now(timezone.utc).isoformat()}
+    state["last_trade"]={"side":"BUY","price":px,"usd":trade_usd,"fee":fee,"time":datetime.now(timezone.utc).isoformat()}
 
 def worker():
     while True:
@@ -52,7 +57,7 @@ def worker():
                 state["error"]=None
                 if state["anchor"] is None: init(px)
                 state["price"]=px
-                # one $10 order per crossed 0.5% level; anchor advances by exact grid levels
+                # one dynamic 10% balance order per crossed 0.5% level; minimum order $2
                 while px >= state["anchor"]*(1+STEP):
                     level=state["anchor"]*(1+STEP)
                     before=state["trades"]; sell(level)
@@ -96,7 +101,7 @@ h1{font-size:22px}.muted{color:#8d98ad}.grid{display:grid;grid-template-columns:
 .card{background:#111724;border:1px solid #222d42;border-radius:12px;padding:14px}.v{font-size:22px;font-weight:700;margin-top:6px}
 .pos{color:#4ade80}.neg{color:#fb7185}.buy{color:#4ade80}.sell{color:#fb7185}
 small{color:#8d98ad}</style></head><body><div class="wrap">
-<h1>₿ BTC 0.5% GRID SIMULATOR</h1><div class="muted">Paper simulation · $100 BTC + $100 USDT · $10/order · fee 0.1% · update 5s</div>
+<h1>₿ BTC 0.5% GRID SIMULATOR</h1><div class="muted">Paper simulation · $100 BTC + $100 USDT · 10% of current side/order · min $2 · fee 0.1% · update 5s</div>
 <div id="x" style="margin-top:14px">Loading...</div></div>
 <script>
 const n=(x,d=2)=>x==null?'N/A':Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
