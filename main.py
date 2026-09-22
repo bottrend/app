@@ -76,7 +76,7 @@ def place_market(side,usd,px):
 def execute(side,level):
     op,usdt=refresh_balances(); usd=order_usd(level)
     if side=="BUY" and usdt<usd: raise RuntimeError("Insufficient LIVE USDT")
-    if side=="SELL" and op*level<usd: raise RuntimeError("Insufficient LIVE BTC")
+    if side=="SELL" and op*level<usd: raise RuntimeError("Insufficient LIVE OP")
     oid=place_market(side.lower(),usd,level)
     time.sleep(1); refresh_balances()
     state["trades"]+=1; state["buys"]+=side=="BUY"; state["sells"]+=side=="SELL"; state["anchor"]=level
