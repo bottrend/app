@@ -146,10 +146,11 @@ body{margin:0;background:#080b12;color:#eaf0ff;font-family:system-ui,Arial}.wrap
 h1{font-size:22px}.muted{color:#8d98ad}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
 .card{background:#111724;border:1px solid #222d42;border-radius:12px;padding:14px}.v{font-size:22px;font-weight:700;margin-top:6px}
 .pos,.buy{color:#4ade80}.neg,.sell{color:#fb7185}small{color:#8d98ad}</style></head><body><div class="wrap">
-<h1>₿ BTC 0.5% GRID · OKX DEMO</h1><div class="muted">DEMO SPOT BTC-USDT · 10% dynamic · grid 0.5% · market orders · update 5s</div>
+<h1>₿ BTC 0.5% GRID · OKX DEMO</h1><div class="muted">DEMO SPOT BTC-USDT · 10% dynamic · grid 0.5% · market orders · update 5s</div><div id="conn" class="card" style="margin-top:14px">OKX DEMO CONNECTION<div class="v">CHECKING...</div><small>BTC / USDT balance will appear after authentication</small></div>
 <div id="x" style="margin-top:14px">Loading...</div></div><script>
 const n=(x,d=2)=>x==null?'N/A':Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
 async function go(){try{let s=await(await fetch('/api',{cache:'no-store'})).json();let p=s.pnl||0,cl=p>=0?'pos':'neg';
+document.getElementById('conn').innerHTML=`OKX DEMO CONNECTION<div class="v ${s.api_ok&&!s.error?'pos':'neg'}">${s.api_ok&&!s.error?'CONNECTED':'ERROR'}</div><small>${s.api_ok&&!s.error?'Authenticated · BTC '+n(s.btc,8)+' · USDT '+n(s.usdt,4):(s.error||'Connecting...')}</small>`;
 document.getElementById('x').innerHTML=`<div class="grid">
 <div class="card">BTC PRICE<div class="v">$${n(s.price)}</div></div>
 <div class="card">ANCHOR<div class="v">$${n(s.anchor)}</div><small>Buy ≤ $${n(s.lower)} · Sell ≥ $${n(s.upper)}</small></div>
