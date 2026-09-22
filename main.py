@@ -18,7 +18,7 @@ SECRET_KEY=os.getenv("OKX_SECRET_KEY","")
 PASSPHRASE=os.getenv("OKX_PASSPHRASE","")
 
 state={"price":None,"anchor":None,"account_op":0.0,"account_usdt":0.0,"initial_total":None,"trades":0,"buys":0,"sells":0,
-"last_trade":None,"started":None,"error":None,"guard":None,"last_buy_price":None,"last_sell_price":None,"history_loaded":False,"api_ok":False,"mode":"OKX LIVE SPOT","armed":LIVE_ENABLED}
+"last_trade":None,"started":None,"error":None,"guard":None,"last_buy_price":None,"last_sell_price":None,"api_ok":False,"mode":"OKX LIVE SPOT","armed":LIVE_ENABLED}
 
 def iso_ts():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00","Z")
@@ -55,19 +55,6 @@ def balances():
 
 def refresh_balances():
     op,usdt=balances(); state["account_op"]=op; state["account_usdt"]=usdt; return op,usdt
-
-def load_trade_history():
-    d=okx_request("GET","/api/v5/trade/fills-history",{"instType":"SPOT","instId":INST_ID,"limit":"100"},auth=True)
-    last_buy=last_sell=None
-    for x in d.get("data",[]):
-        side=str(x.get("side","")).lower()
-        try: px=float(x.get("fillPx") or x.get("px") or 0)
-        except Exception: px=0
-        if px<=0: continue
-        if side=="buy" and last_buy is None: last_buy=px
-        if side=="sell" and last_sell is None: last_sell=px
-        if last_buy is not None and last_sell is not None: break
-    state["last_buy_price"]=last_buy; state["last_sell_price"]=last_sell; state["history_loaded"]=True
 
 def order_fill_price(ord_id,fallback):
     try:
@@ -115,7 +102,7 @@ def place_market(side,usd,px):
         raise RuntimeError(f"Ambiguous order submit; no retry sent. clOrdId={clid}") from e
 
 def execute(side,level):
-    # Same-side monotonic guard + opposite-side round-trip guard.
+    # Current-session sequence guard only; old OKX history never sets sequence prices.
     bp=state.get("last_buy_price"); sp=state.get("last_sell_price")
     if side=="BUY":
         if bp is not None and level>bp:
@@ -154,7 +141,6 @@ def worker():
                 state["price"]=px; state["error"]=None
                 if API_KEY and SECRET_KEY and PASSPHRASE:
                     refresh_balances(); state["api_ok"]=True
-                    if not state.get("history_loaded"): load_trade_history()
                 else:
                     state["api_ok"]=False
                 if state["anchor"] is None:
