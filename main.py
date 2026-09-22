@@ -132,4 +132,4 @@ document.getElementById('x').innerHTML=`<div class="grid">
 <div class="card">LAST ORDER<div class="v ${s.last_trade?.side==='BUY'?'buy':'sell'}">${s.last_trade?s.last_trade.side:'N/A'}</div><small>${s.last_trade?'~$'+n(s.last_trade.usd,2)+' · OKX '+s.last_trade.ordId:'Waiting for grid trigger'}</small></div>
 <div class="card">STARTED<div class="v" style="font-size:14px">${s.started||'N/A'}</div><small>Mode: ${s.mode}</small></div>
 </div><p class="muted">Status: ${s.error?'ERROR · '+s.error:(s.api_ok?'CONNECTED · OKX LIVE':'Waiting for API')}</p>`; }catch(e){}}
-go();setInterval(go,5000);</script></body></html>"""
+go();setInterval(go,5000);</script></body></html>"""\n\n@app.get("/")\ndef home():\n    return HTML\n\n@app.get("/api")\ndef api():\n    return jsonify(snapshot())\n\n@app.get("/health")\ndef health():\n    return jsonify({"ok":True,"mode":"OKX_LIVE","apiConfigured":bool(API_KEY and SECRET_KEY and PASSPHRASE),"liveTradingEnabled":LIVE_ENABLED})\n\nif __name__=="__main__":\n    threading.Thread(target=worker,daemon=True).start()\n    app.run(host="0.0.0.0",port=int(os.getenv("PORT","8080")))
