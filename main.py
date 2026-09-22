@@ -17,7 +17,7 @@ SECRET_KEY=os.getenv("OKX_SECRET_KEY","")
 PASSPHRASE=os.getenv("OKX_PASSPHRASE","")
 
 state={"price":None,"anchor":None,"account_op":0.0,"account_usdt":0.0,"initial_total":None,"trades":0,"buys":0,"sells":0,
-"last_trade":None,"started":None,"error":None,"api_ok":False,"mode":"OKX LIVE SPOT","armed":LIVE_ENABLED}
+"last_trade":None,"started":None,"error":None,"guard":None,"last_buy_price":None,"last_sell_price":None,"history_loaded":False,"api_ok":False,"mode":"OKX LIVE SPOT","armed":LIVE_ENABLED}
 
 def iso_ts():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00","Z")
@@ -89,7 +89,7 @@ def worker():
             with lock:
                 state["price"]=px; state["error"]=None
                 if API_KEY and SECRET_KEY and PASSPHRASE:
-                    refresh_balances(); state["api_ok"]=True
+                    refresh_balances(); state["api_ok"]=True\n                    if not state.get("history_loaded"): load_trade_history()
                 else:
                     state["api_ok"]=False
                 if state["anchor"] is None:
@@ -139,7 +139,7 @@ document.getElementById('x').innerHTML=`<div class="grid">
 <div class="card">ORDERS<div class="v">${s.trades}</div><small><span class="buy">BUY ${s.buys}</span> · <span class="sell">SELL ${s.sells}</span></small></div>
 <div class="card">LAST ORDER<div class="v ${s.last_trade?.side==='BUY'?'buy':'sell'}">${s.last_trade?s.last_trade.side:'N/A'}</div><small>${s.last_trade?'~$'+n(s.last_trade.usd,2)+' · OKX '+s.last_trade.ordId:'Waiting for grid trigger'}</small></div>
 <div class="card">STARTED<div class="v" style="font-size:14px">${s.started||'N/A'}</div><small>Mode: ${s.mode}</small></div>
-</div><p class="muted">Status: ${s.error?'ERROR · '+s.error:(s.api_ok?'CONNECTED · OKX LIVE':'Waiting for API')}</p>`; }catch(e){}}
+</div><p class="muted">Status: ${s.error?'ERROR · '+s.error:(s.guard?'PROTECTED · '+s.guard:(s.api_ok?'CONNECTED · OKX LIVE':'Waiting for API'))}</p>`; }catch(e){}}
 go();setInterval(go,5000);</script></body></html>"""
 
 @app.get("/")
