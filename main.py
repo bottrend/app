@@ -18,7 +18,7 @@ SECRET_KEY=os.getenv("OKX_SECRET_KEY","")
 PASSPHRASE=os.getenv("OKX_PASSPHRASE","")
 
 state={"price":None,"anchor":None,"account_op":0.0,"account_usdt":0.0,"initial_total":None,"trades":0,"buys":0,"sells":0,
-"last_trade":None,"started":None,"error":None,"guard":None,"last_buy_price":None,"last_sell_price":None,"api_ok":False,"mode":"OKX LIVE SPOT","armed":LIVE_ENABLED}
+"last_trade":None,"started":None,"error":None,"guard":None,"api_ok":False,"mode":"OKX LIVE SPOT","armed":LIVE_ENABLED}
 
 def iso_ts():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00","Z")
@@ -102,37 +102,35 @@ def place_market(side,usd,px):
         raise RuntimeError(f"Ambiguous order submit; no retry sent. clOrdId={clid}") from e
 
 def execute(side,level):
-    # Current-session sequence guard only; old OKX history never sets sequence prices.
-    bp=state.get("last_buy_price"); sp=state.get("last_sell_price")
-    if side=="BUY":
-        if bp is not None and level>bp:
-            state["guard"]=f"BUY blocked: {level:.8f} > previous BUY {bp:.8f}"
-            return False
-        if sp is not None and level>=sp*(1-MIN_ROUNDTRIP_MARGIN):
-            state["guard"]=f"BUY blocked: not safely below previous SELL {sp:.8f}"
-            return False
-    else:
-        if sp is not None and level<sp:
-            state["guard"]=f"SELL blocked: {level:.8f} < previous SELL {sp:.8f}"
-            return False
-        if bp is None:
-            state["guard"]="SELL blocked: no verified prior BUY price"
-            return False
-        if level<=bp*(1+MIN_ROUNDTRIP_MARGIN):
-            state["guard"]=f"SELL blocked: not safely above previous BUY {bp:.8f}"
-            return False
+    # Sequence rule: compare a new order only with the immediately previous bot order.
+    prev=state.get("last_trade")
+    if prev:
+        prev_side=prev.get("side")
+        prev_px=float(prev.get("fill_price") or prev.get("trigger_price") or 0)
+        if prev_px>0:
+            if side=="BUY":
+                if prev_side=="BUY" and level>=prev_px:
+                    state["guard"]=f"BUY blocked: {level:.8f} >= previous BUY {prev_px:.8f}"
+                    return False
+                if prev_side=="SELL" and level>=prev_px*(1-MIN_ROUNDTRIP_MARGIN):
+                    state["guard"]=f"BUY blocked: not safely below previous SELL {prev_px:.8f}"
+                    return False
+            else:
+                if prev_side=="SELL" and level<=prev_px:
+                    state["guard"]=f"SELL blocked: {level:.8f} <= previous SELL {prev_px:.8f}"
+                    return False
+                if prev_side=="BUY" and level<=prev_px*(1+MIN_ROUNDTRIP_MARGIN):
+                    state["guard"]=f"SELL blocked: not safely above previous BUY {prev_px:.8f}"
+                    return False
     state["guard"]=None
     op,usdt=refresh_balances(); usd=order_usd(level)
     if side=="BUY" and usdt<usd: raise RuntimeError("Insufficient LIVE USDT")
     if side=="SELL" and op*level<usd: raise RuntimeError("Insufficient LIVE OP")
     oid,clid=place_market(side.lower(),usd,level)
     time.sleep(1); fill_px=order_fill_price(oid,level); refresh_balances()
-    if side=="BUY": state["last_buy_price"]=fill_px
-    else: state["last_sell_price"]=fill_px
     state["trades"]+=1; state["buys"]+=side=="BUY"; state["sells"]+=side=="SELL"; state["anchor"]=level
     state["last_trade"]={"side":side,"trigger_price":level,"fill_price":fill_px,"usd":usd,"ordId":oid,"clOrdId":clid,"time":datetime.now(timezone.utc).isoformat()}
     return True
-
 def worker():
     while True:
         try:
