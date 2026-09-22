@@ -1,4 +1,4 @@
-import os, time, threading, json, base64, hmac, hashlib, math
+import os, time, threading, json, base64, hmac, hashlib, math, uuid
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 from flask import Flask, jsonify, render_template_string
@@ -81,18 +81,38 @@ def order_usd(px):
     min_usd=min_sz*px
     return TRADE_USD if min_usd < TRADE_USD else min_usd*1.01
 
+def get_order_by_client_id(clid):
+    try:
+        d=okx_request("GET","/api/v5/trade/order",{"instId":INST_ID,"clOrdId":clid},auth=True)
+        return d.get("data",[None])[0] if d.get("data") else None
+    except Exception:
+        return None
+
 def place_market(side,usd,px):
     if not LIVE_ENABLED: raise RuntimeError("LIVE trading safety lock is OFF")
     min_sz,lot_sz=instrument_rules()
+    # Unique client ID makes an ambiguous submit reconcilable and prevents blind duplicate retries.
+    clid=("opg"+uuid.uuid4().hex)[:32]
     if side=="buy":
-        body={"instId":INST_ID,"tdMode":"cash","side":"buy","ordType":"market","sz":f"{usd:.8f}","tgtCcy":"quote_ccy"}
+        body={"instId":INST_ID,"tdMode":"cash","side":"buy","ordType":"market","sz":f"{usd:.8f}","tgtCcy":"quote_ccy","clOrdId":clid}
     else:
         qty=max(usd/px,min_sz)
         if lot_sz>0: qty=math.ceil(qty/lot_sz)*lot_sz
-        body={"instId":INST_ID,"tdMode":"cash","side":"sell","ordType":"market","sz":f"{qty:.8f}","tgtCcy":"base_ccy"}
-    item=okx_request("POST","/api/v5/trade/order",body=body,auth=True)["data"][0]
-    if item.get("sCode") not in (None,"","0"): raise RuntimeError(f'Order {item.get("sCode")}: {item.get("sMsg")}')
-    return item.get("ordId")
+        body={"instId":INST_ID,"tdMode":"cash","side":"sell","ordType":"market","sz":f"{qty:.8f}","tgtCcy":"base_ccy","clOrdId":clid}
+    try:
+        item=okx_request("POST","/api/v5/trade/order",body=body,auth=True)["data"][0]
+        if item.get("sCode") not in (None,"","0"): raise RuntimeError(f'Order {item.get("sCode")}: {item.get("sMsg")}')
+        oid=item.get("ordId")
+        if not oid: raise RuntimeError("OKX accepted response without ordId")
+        return oid,clid
+    except (requests.Timeout, requests.ConnectionError) as e:
+        # Never submit again blindly. Query OKX with the same unique clOrdId first.
+        for _ in range(5):
+            time.sleep(1)
+            item=get_order_by_client_id(clid)
+            if item and item.get("ordId"):
+                return item["ordId"],clid
+        raise RuntimeError(f"Ambiguous order submit; no retry sent. clOrdId={clid}") from e
 
 def execute(side,level):
     # Same-side monotonic guard + opposite-side round-trip guard.
@@ -118,12 +138,12 @@ def execute(side,level):
     op,usdt=refresh_balances(); usd=order_usd(level)
     if side=="BUY" and usdt<usd: raise RuntimeError("Insufficient LIVE USDT")
     if side=="SELL" and op*level<usd: raise RuntimeError("Insufficient LIVE OP")
-    oid=place_market(side.lower(),usd,level)
+    oid,clid=place_market(side.lower(),usd,level)
     time.sleep(1); fill_px=order_fill_price(oid,level); refresh_balances()
     if side=="BUY": state["last_buy_price"]=fill_px
     else: state["last_sell_price"]=fill_px
     state["trades"]+=1; state["buys"]+=side=="BUY"; state["sells"]+=side=="SELL"; state["anchor"]=level
-    state["last_trade"]={"side":side,"trigger_price":level,"fill_price":fill_px,"usd":usd,"ordId":oid,"time":datetime.now(timezone.utc).isoformat()}
+    state["last_trade"]={"side":side,"trigger_price":level,"fill_price":fill_px,"usd":usd,"ordId":oid,"clOrdId":clid,"time":datetime.now(timezone.utc).isoformat()}
     return True
 
 def worker():
