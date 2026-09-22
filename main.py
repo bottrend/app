@@ -6,8 +6,8 @@ import requests
 app=Flask(__name__)
 lock=threading.Lock()
 
-START_TOTAL=200.0
-START_USDT=100.0
+START_TOTAL=2000.0
+START_USDT=1000.0
 TRADE_PCT=0.10
 MIN_TRADE_USD=2.0
 STEP=0.005
@@ -23,7 +23,7 @@ def btc_price():
 
 def init(px):
     state["price"]=px; state["anchor"]=px
-    state["initial_btc"]=100.0/px; state["btc"]=state["initial_btc"]
+    state["initial_btc"]=1000.0/px; state["btc"]=state["initial_btc"]
     state["started"]=datetime.now(timezone.utc).isoformat()
 
 def sell(px):
@@ -101,7 +101,7 @@ h1{font-size:22px}.muted{color:#8d98ad}.grid{display:grid;grid-template-columns:
 .card{background:#111724;border:1px solid #222d42;border-radius:12px;padding:14px}.v{font-size:22px;font-weight:700;margin-top:6px}
 .pos{color:#4ade80}.neg{color:#fb7185}.buy{color:#4ade80}.sell{color:#fb7185}
 small{color:#8d98ad}</style></head><body><div class="wrap">
-<h1>₿ BTC 0.5% GRID SIMULATOR</h1><div class="muted">Paper simulation · $100 BTC + $100 USDT · 10% of current side/order · min $2 · fee 0.1% · update 5s</div>
+<h1>₿ BTC 0.5% GRID SIMULATOR</h1><div class="muted">Paper simulation · $1,000 BTC + $1,000 USDT · 10% of current side/order · min $2 · fee 0.1% · update 5s</div>
 <div id="x" style="margin-top:14px">Loading...</div></div>
 <script>
 const n=(x,d=2)=>x==null?'N/A':Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
