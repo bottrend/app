@@ -114,18 +114,22 @@ def api(): return jsonify(snapshot())
 @app.get("/health")
 def health(): return {"ok":True,"mode":"OKX_LIVE","apiConfigured":bool(API_KEY and SECRET_KEY and PASSPHRASE),"liveTradingEnabled":LIVE_ENABLED}
 
-HTML="""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OKX LIVE Grid</title>
-<style>body{margin:0;background:#080b12;color:#eaf0ff;font-family:system-ui}.wrap{max-width:900px;margin:auto;padding:20px}.card{background:#111724;border:1px solid #222d42;border-radius:12px;padding:14px;margin-top:12px}.v{font-size:22px;font-weight:700}.ok{color:#4ade80}.bad{color:#fb7185}.muted{color:#8d98ad}</style></head>
-<body><div class="wrap"><h2>OP 1% GRID · OKX LIVE</h2><div class="muted">LIVE SPOT · target $2/order · 1% grid · 5s polling</div><div id="x" class="card">Loading...</div></div>
-<script>const n=(x,d=2)=>x==null?'N/A':Number(x).toLocaleString(undefined,{maximumFractionDigits:d});
-async function go(){let s=await(await fetch('/api',{cache:'no-store'})).json();document.getElementById('x').innerHTML=
-'<div class="v '+(s.api_ok?'ok':'bad')+'">'+(s.api_ok?'API CONNECTED':'WAITING FOR API')+'</div>'+
-'<p>Trading: <b class="'+(s.armed?'ok':'bad')+'">'+(s.armed?'LIVE ENABLED':'SAFETY LOCKED')+'</b></p>'+
-'<p>BTC $'+n(s.price)+' · Anchor $'+n(s.anchor)+'</p><p>Available OP '+n(s.account_op,8)+' · USDT '+n(s.account_usdt,4)+'</p>'+
-'<p>Orders '+s.trades+' · BUY '+s.buys+' · SELL '+s.sells+'</p><small class="muted">'+(s.error||'Ready')+'</small>'}go();setInterval(go,5000)</script></body></html>"""
-@app.get("/")
-def home(): return render_template_string(HTML)
-
-if __name__=="__main__":
-    threading.Thread(target=worker,daemon=True).start()
-    app.run(host="0.0.0.0",port=int(os.getenv("PORT","8080")))
+HTML="""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OP Grid · OKX LIVE</title>
+<style>body{margin:0;background:#080b12;color:#eaf0ff;font-family:system-ui,Arial}.wrap{max-width:900px;margin:auto;padding:20px}h1{font-size:22px}.muted{color:#8d98ad}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.card{background:#111724;border:1px solid #222d42;border-radius:12px;padding:14px}.v{font-size:22px;font-weight:700;margin-top:6px}.pos,.buy{color:#4ade80}.neg,.sell{color:#fb7185}small{color:#8d98ad}</style></head><body><div class="wrap">
+<h1>OP GRID · OKX LIVE</h1><div class="muted">LIVE SPOT OP-USDT · adjustable grid · target $2/order · update 5s</div><div id="conn" class="card" style="margin-top:14px">OKX LIVE CONNECTION<div class="v">CHECKING...</div></div>
+<div id="x" style="margin-top:14px">Loading...</div></div><script>
+const n=(x,d=2)=>x==null?'N/A':Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+async function go(){try{let s=await(await fetch('/api',{cache:'no-store'})).json();let p=s.pnl||0,cl=p>=0?'pos':'neg';
+document.getElementById('conn').innerHTML=`OKX LIVE CONNECTION<div class="v ${s.api_ok&&!s.error?'pos':'neg'}">${s.api_ok&&!s.error?'CONNECTED':'ERROR'}</div><small>${s.api_ok?'Account OP '+n(s.account_op,8)+' · USDT '+n(s.account_usdt,4):(s.error||'Waiting for API')}</small><br><small>Trading: <b class="${s.armed?'pos':'neg'}">${s.armed?'LIVE ENABLED':'SAFETY LOCKED'}</b></small>`;
+document.getElementById('x').innerHTML=`<div class="grid">
+<div class="card">OP PRICE<div class="v">$${n(s.price,6)}</div></div>
+<div class="card">ANCHOR<div class="v">$${n(s.anchor,6)}</div><small>Buy ≤ $${n(s.lower,6)} · Sell ≥ $${n(s.upper,6)}</small></div>
+<div class="card">GRID<div class="v">${n(s.grid_pct,2)}%</div><small>Target $${n(s.trade_target_usd,2)}/order</small></div>
+<div class="card">ACCOUNT VALUE<div class="v ${cl}">$${n(s.total,4)}</div><small class="${cl}">${s.pnl==null?'P&L starts after API connects':(p>=0?'+':'')+'$'+n(p,4)+' ('+n(s.pnl_pct,3)+'%) since bot start'}</small></div>
+<div class="card">OP AVAILABLE<div class="v">${n(s.account_op,8)}</div><small>≈ $${n(s.op_value,2)}</small></div>
+<div class="card">USDT AVAILABLE<div class="v">${n(s.account_usdt,4)}</div></div>
+<div class="card">ORDERS<div class="v">${s.trades}</div><small><span class="buy">BUY ${s.buys}</span> · <span class="sell">SELL ${s.sells}</span></small></div>
+<div class="card">LAST ORDER<div class="v ${s.last_trade?.side==='BUY'?'buy':'sell'}">${s.last_trade?s.last_trade.side:'N/A'}</div><small>${s.last_trade?'~$'+n(s.last_trade.usd,2)+' · OKX '+s.last_trade.ordId:'Waiting for grid trigger'}</small></div>
+<div class="card">STARTED<div class="v" style="font-size:14px">${s.started||'N/A'}</div><small>Mode: ${s.mode}</small></div>
+</div><p class="muted">Status: ${s.error?'ERROR · '+s.error:(s.api_ok?'CONNECTED · OKX LIVE':'Waiting for API')}</p>`; }catch(e){}}
+go();setInterval(go,5000);</script></body></html>"""
