@@ -93,7 +93,7 @@ def worker():
                 else:
                     state["api_ok"]=False
                 if state["anchor"] is None:
-                    state["anchor"]=px; state["started"]=datetime.now(timezone.utc).isoformat()
+                    state["anchor"]=px; state["started"]=datetime.now(timezone.utc).isoformat(); state["initial_op"]=state["account_op"]; state["initial_usdt"]=state["account_usdt"]
                 if LIVE_ENABLED and state["api_ok"]:
                     while px>=state["anchor"]*(1+STEP): execute("SELL",state["anchor"]*(1+STEP))
                     while px<=state["anchor"]*(1-STEP): execute("BUY",state["anchor"]*(1-STEP))
@@ -115,6 +115,8 @@ def snapshot():
         else:
             s["op_value"]=None; s["total"]=None
         s["pnl"]=None; s["pnl_pct"]=None
+        s["op_change"]=None if s.get("initial_op") is None else s["account_op"]-s["initial_op"]
+        s["usdt_change"]=None if s.get("initial_usdt") is None else s["account_usdt"]-s["initial_usdt"]
         s["grid_pct"]=STEP*100
         s["trade_target_usd"]=TRADE_USD
         return s
@@ -131,8 +133,8 @@ document.getElementById('x').innerHTML=`<div class="grid">
 <div class="card">ANCHOR<div class="v">$${n(s.anchor,6)}</div><small>Buy ≤ $${n(s.lower,6)} · Sell ≥ $${n(s.upper,6)}</small></div>
 <div class="card">GRID<div class="v">${n(s.grid_pct,2)}%</div><small>Target $${n(s.trade_target_usd,2)}/order</small></div>
 <div class="card">ACCOUNT VALUE<div class="v ${cl}">$${n(s.total,4)}</div><small class="${cl}">${s.pnl==null?'P&L starts after API connects':(p>=0?'+':'')+'$'+n(p,4)+' ('+n(s.pnl_pct,3)+'%) since bot start'}</small></div>
-<div class="card">OP AVAILABLE<div class="v">${n(s.account_op,8)}</div><small>≈ $${n(s.op_value,2)}</small></div>
-<div class="card">USDT AVAILABLE<div class="v">${n(s.account_usdt,4)}</div></div>
+<div class="card">OP AVAILABLE<div class="v">${n(s.account_op,8)}</div><small>Start ${n(s.initial_op,8)} · Change ${s.op_change==null?"N/A":(s.op_change>=0?"+":"")+n(s.op_change,8)+" OP"} · ≈ ${n(s.op_value,2)}</small></div>
+<div class="card">USDT AVAILABLE<div class="v">${n(s.account_usdt,4)}</div><small>Start ${n(s.initial_usdt,4)} · Change ${s.usdt_change==null?"N/A":(s.usdt_change>=0?"+":"")+n(s.usdt_change,4)+" USDT"}</small></div>
 <div class="card">ORDERS<div class="v">${s.trades}</div><small><span class="buy">BUY ${s.buys}</span> · <span class="sell">SELL ${s.sells}</span></small></div>
 <div class="card">LAST ORDER<div class="v ${s.last_trade?.side==='BUY'?'buy':'sell'}">${s.last_trade?s.last_trade.side:'N/A'}</div><small>${s.last_trade?'~$'+n(s.last_trade.usd,2)+' · OKX '+s.last_trade.ordId:'Waiting for grid trigger'}</small></div>
 <div class="card">STARTED<div class="v" style="font-size:14px">${s.started||'N/A'}</div><small>Mode: ${s.mode}</small></div>
