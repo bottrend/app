@@ -117,6 +117,7 @@ def snapshot():
         s["pnl"]=None; s["pnl_pct"]=None
         s["op_change"]=None if s.get("initial_op") is None else s["account_op"]-s["initial_op"]
         s["usdt_change"]=None if s.get("initial_usdt") is None else s["account_usdt"]-s["initial_usdt"]
+        s["anchor_vs_price_pct"]=None if not s["price"] or not s["anchor"] else (s["price"]/s["anchor"]-1)*100
         s["grid_pct"]=STEP*100
         s["trade_target_usd"]=TRADE_USD
         return s
@@ -130,7 +131,7 @@ async function go(){try{let s=await(await fetch('/api',{cache:'no-store'})).json
 document.getElementById('gridHead').textContent=n(s.grid_pct,2)+'%';\ndocument.getElementById('conn').innerHTML=`OKX LIVE CONNECTION<div class="v ${s.api_ok&&!s.error?'pos':'neg'}">${s.api_ok&&!s.error?'CONNECTED':'ERROR'}</div><small>${s.api_ok?'Account OP '+n(s.account_op,8)+' · USDT '+n(s.account_usdt,4):(s.error||'Waiting for API')}</small><br><small>Trading: <b class="${s.armed?'pos':'neg'}">${s.armed?'LIVE ENABLED':'SAFETY LOCKED'}</b></small>`;
 document.getElementById('x').innerHTML=`<div class="grid">
 <div class="card">OP PRICE<div class="v">$${n(s.price,6)}</div></div>
-<div class="card">ANCHOR<div class="v">$${n(s.anchor,6)}</div><small>Buy ≤ $${n(s.lower,6)} · Sell ≥ $${n(s.upper,6)}</small></div>
+<div class="card">ANCHOR<div class="v">$${n(s.anchor,6)}</div><small>Now vs anchor ${s.anchor_vs_price_pct==null?"N/A":(s.anchor_vs_price_pct>=0?"+":"")+n(s.anchor_vs_price_pct,3)+"%"}<br>Buy ≤ ${n(s.lower,6)} · Sell ≥ ${n(s.upper,6)}</small></div>
 <div class="card">GRID<div class="v">${n(s.grid_pct,2)}%</div><small>Target $${n(s.trade_target_usd,2)}/order</small></div>
 <div class="card">ACCOUNT VALUE<div class="v ${cl}">$${n(s.total,4)}</div><small class="${cl}">${s.pnl==null?'P&L starts after API connects':(p>=0?'+':'')+'$'+n(p,4)+' ('+n(s.pnl_pct,3)+'%) since bot start'}</small></div>
 <div class="card">OP AVAILABLE<div class="v">${n(s.account_op,8)}</div><small>Start ${n(s.initial_op,8)} · Change ${s.op_change==null?"N/A":(s.op_change>=0?"+":"")+n(s.op_change,8)+" OP"} · ≈ ${n(s.op_value,2)}</small></div>
