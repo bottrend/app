@@ -12,6 +12,8 @@ INST_ID="BTC-USDT"
 STEP=0.005
 TRADE_PCT=0.10
 MIN_TRADE_USD=2.0
+CAPITAL_LIMIT=2000.0
+SIDE_BUDGET=1000.0
 POLL_SECONDS=5
 
 API_KEY=os.getenv("OKX_API_KEY","")
@@ -81,7 +83,7 @@ def refresh_balances():
 
 def execute(side,level):
     btc,usdt=refresh_balances()
-    trade_usd=(usdt*TRADE_PCT) if side=="BUY" else (btc*level*TRADE_PCT)
+    trade_usd=(min(usdt,SIDE_BUDGET)*TRADE_PCT) if side=="BUY" else (min(btc*level,SIDE_BUDGET)*TRADE_PCT)
     if trade_usd < MIN_TRADE_USD:
         raise RuntimeError(f"{side} size below $2 minimum")
     ord_id=place_market(side.lower(),trade_usd,level)
@@ -146,7 +148,7 @@ body{margin:0;background:#080b12;color:#eaf0ff;font-family:system-ui,Arial}.wrap
 h1{font-size:22px}.muted{color:#8d98ad}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
 .card{background:#111724;border:1px solid #222d42;border-radius:12px;padding:14px}.v{font-size:22px;font-weight:700;margin-top:6px}
 .pos,.buy{color:#4ade80}.neg,.sell{color:#fb7185}small{color:#8d98ad}</style></head><body><div class="wrap">
-<h1>₿ BTC 0.5% GRID · OKX DEMO</h1><div class="muted">DEMO SPOT BTC-USDT · 10% dynamic · grid 0.5% · market orders · update 5s</div><div id="conn" class="card" style="margin-top:14px">OKX DEMO CONNECTION<div class="v">CHECKING...</div><small>BTC / USDT balance will appear after authentication</small></div>
+<h1>₿ BTC 0.5% GRID · OKX DEMO</h1><div class="muted">DEMO SPOT BTC-USDT · $2,000 bot cap · 10% dynamic · grid 0.5% · update 5s</div><div id="conn" class="card" style="margin-top:14px">OKX DEMO CONNECTION<div class="v">CHECKING...</div><small>BTC / USDT balance will appear after authentication</small></div>
 <div id="x" style="margin-top:14px">Loading...</div></div><script>
 const n=(x,d=2)=>x==null?'N/A':Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
 async function go(){try{let s=await(await fetch('/api',{cache:'no-store'})).json();let p=s.pnl||0,cl=p>=0?'pos':'neg';
