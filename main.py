@@ -20,7 +20,7 @@ API_KEY=os.getenv("OKX_API_KEY","")
 SECRET_KEY=os.getenv("OKX_SECRET_KEY","")
 PASSPHRASE=os.getenv("OKX_PASSPHRASE","")
 
-state={"price":None,"anchor":None,"btc":0.0,"usdt":0.0,"initial_total":None,
+state={"price":None,"anchor":None,"btc":0.0,"usdt":0.0,"account_btc":0.0,"account_usdt":0.0,"initial_total":2000.0,
        "trades":0,"buys":0,"sells":0,"last_trade":None,"started":None,
        "error":None,"api_ok":False,"mode":"OKX DEMO SPOT"}
 
@@ -78,15 +78,21 @@ def place_market(side,usd,px):
 
 def refresh_balances():
     btc,usdt=balances()
-    state["btc"]=btc; state["usdt"]=usdt
+    state["account_btc"]=btc; state["account_usdt"]=usdt
     return btc,usdt
 
 def execute(side,level):
-    btc,usdt=refresh_balances()
-    trade_usd=(min(usdt,SIDE_BUDGET)*TRADE_PCT) if side=="BUY" else (min(btc*level,SIDE_BUDGET)*TRADE_PCT)
+    account_btc,account_usdt=refresh_balances()
+    trade_usd=(state["usdt"]*TRADE_PCT) if side=="BUY" else (state["btc"]*level*TRADE_PCT)
     if trade_usd < MIN_TRADE_USD:
         raise RuntimeError(f"{side} size below $2 minimum")
+    if side=="BUY" and account_usdt < trade_usd: raise RuntimeError("Insufficient OKX Demo USDT")
+    if side=="SELL" and account_btc*level < trade_usd: raise RuntimeError("Insufficient OKX Demo BTC")
     ord_id=place_market(side.lower(),trade_usd,level)
+    if side=="BUY":
+        state["usdt"]-=trade_usd; state["btc"]+=trade_usd/level
+    else:
+        state["btc"]-=trade_usd/level; state["usdt"]+=trade_usd
     time.sleep(1)
     refresh_balances()
     state["trades"]+=1
@@ -98,9 +104,10 @@ def execute(side,level):
 
 def init(px):
     btc,usdt=refresh_balances()
+    if usdt < SIDE_BUDGET or btc*px < SIDE_BUDGET: raise RuntimeError("OKX Demo needs at least $1000 BTC and $1000 USDT available")
     state["price"]=px; state["anchor"]=px
-    state["btc"]=btc; state["usdt"]=usdt
-    state["initial_total"]=usdt+btc*px
+    state["btc"]=SIDE_BUDGET/px; state["usdt"]=SIDE_BUDGET
+    state["initial_total"]=CAPITAL_LIMIT
     state["started"]=datetime.now(timezone.utc).isoformat()
     state["api_ok"]=True
 
@@ -156,9 +163,9 @@ document.getElementById('conn').innerHTML=`OKX DEMO CONNECTION<div class="v ${s.
 document.getElementById('x').innerHTML=`<div class="grid">
 <div class="card">BTC PRICE<div class="v">$${n(s.price)}</div></div>
 <div class="card">ANCHOR<div class="v">$${n(s.anchor)}</div><small>Buy ≤ $${n(s.lower)} · Sell ≥ $${n(s.upper)}</small></div>
-<div class="card">OKX DEMO VALUE<div class="v ${cl}">$${n(s.total,4)}</div><small class="${cl}">${p>=0?'+':''}$${n(p,4)} (${n(s.pnl_pct,3)}%) since bot start</small></div>
-<div class="card">BTC AVAILABLE<div class="v">${n(s.btc,8)}</div><small>≈ $${n(s.btc_value,2)}</small></div>
-<div class="card">USDT AVAILABLE<div class="v">$${n(s.usdt,4)}</div></div>
+<div class="card">BOT $2,000 VALUE<div class="v ${cl}">${n(s.total,4)}</div><small class="${cl}">${p>=0?'+':''}$${n(p,4)} (${n(s.pnl_pct,3)}%) since bot start</small></div>
+<div class="card">BOT BTC<div class="v">${n(s.btc,8)}</div><small>≈ $${n(s.btc_value,2)}</small></div>
+<div class="card">BOT USDT<div class="v">${n(s.usdt,4)}</div></div>
 <div class="card">BOT ORDERS<div class="v">${s.trades}</div><small><span class="buy">BUY ${s.buys}</span> · <span class="sell">SELL ${s.sells}</span></small></div>
 <div class="card">LAST ORDER<div class="v ${s.last_trade?.side==='BUY'?'buy':'sell'}">${s.last_trade?s.last_trade.side:'N/A'}</div><small>${s.last_trade?'~$'+n(s.last_trade.usd,2)+' · OKX '+s.last_trade.ordId:'Waiting for ±0.5%'}</small></div>
 </div><p class="muted">Status: ${s.error?'ERROR · '+s.error:(s.api_ok?'CONNECTED · OKX DEMO ONLY':'Connecting...')}</p>`; }catch(e){}}
