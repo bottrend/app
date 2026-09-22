@@ -11,7 +11,7 @@ OKX_BASE="https://www.okx.com"
 INST_ID="BTC-USDT"
 STEP=0.005
 TRADE_USD=2.0
-MIN_TRADE_USD=2.0
+MIN_TRADE_USD=0.0
 CAPITAL_LIMIT=200.0
 SIDE_BUDGET=100.0
 POLL_SECONDS=5
@@ -49,6 +49,11 @@ def okx_request(method,path,params=None,body=None,auth=False):
         raise RuntimeError(f'OKX {data.get("code")}: {data.get("msg")}')
     return data
 
+def instrument_rules():
+    d=okx_request("GET","/api/v5/public/instruments",{"instType":"SPOT","instId":INST_ID})
+    x=d["data"][0]
+    return float(x["minSz"]), float(x["lotSz"])
+
 def btc_price():
     d=okx_request("GET","/api/v5/market/ticker",{"instId":INST_ID})
     return float(d["data"][0]["last"])
@@ -62,12 +67,19 @@ def balances():
     return btc,usdt
 
 def place_market(side,usd,px):
-    if usd < MIN_TRADE_USD: return None
+    min_sz,lot_sz=instrument_rules()
+    min_usd=min_sz*px
+    usd=max(usd,min_usd)
+    # small safety margin so price movement/rounding cannot push the order below OKX minSz
+    usd=max(usd,min_usd*1.01)
     if side=="buy":
         body={"instId":INST_ID,"tdMode":"cash","side":"buy","ordType":"market",
               "sz":f"{usd:.8f}","tgtCcy":"quote_ccy"}
     else:
-        qty=usd/px
+        qty=max(usd/px,min_sz)
+        if lot_sz>0:
+            import math
+            qty=math.ceil(qty/lot_sz)*lot_sz
         body={"instId":INST_ID,"tdMode":"cash","side":"sell","ordType":"market",
               "sz":f"{qty:.8f}","tgtCcy":"base_ccy"}
     d=okx_request("POST","/api/v5/trade/order",body=body,auth=True)
@@ -86,8 +98,9 @@ def execute(side,level):
     trade_usd=TRADE_USD
     if side=="BUY" and state["usdt"] < trade_usd: raise RuntimeError("Bot $200 USDT side exhausted")
     if side=="SELL" and state["btc"]*level < trade_usd: raise RuntimeError("Bot $200 BTC side exhausted")
-    if trade_usd < MIN_TRADE_USD:
-        raise RuntimeError(f"{side} size below $2 minimum")
+    min_sz,_=instrument_rules()
+    okx_min_usd=min_sz*level
+    trade_usd=max(trade_usd,okx_min_usd*1.01)
     if side=="BUY" and account_usdt < trade_usd: raise RuntimeError("Insufficient OKX Demo USDT")
     if side=="SELL" and account_btc*level < trade_usd: raise RuntimeError("Insufficient OKX Demo BTC")
     ord_id=place_market(side.lower(),trade_usd,level)
