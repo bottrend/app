@@ -11,6 +11,7 @@ INST_ID=os.getenv("INST_ID","OP-USDT")
 STEP=float(os.getenv("GRID_STEP","0.01"))
 TRADE_USD=float(os.getenv("TRADE_USD","2"))
 POLL_SECONDS=int(os.getenv("POLL_SECONDS","5"))
+MIN_ROUNDTRIP_MARGIN=float(os.getenv("MIN_ROUNDTRIP_MARGIN","0.0025"))
 LIVE_ENABLED=os.getenv("LIVE_TRADING_ENABLED","false").lower()=="true"
 API_KEY=os.getenv("OKX_API_KEY","")
 SECRET_KEY=os.getenv("OKX_SECRET_KEY","")
@@ -55,6 +56,26 @@ def balances():
 def refresh_balances():
     op,usdt=balances(); state["account_op"]=op; state["account_usdt"]=usdt; return op,usdt
 
+def load_trade_history():
+    d=okx_request("GET","/api/v5/trade/fills-history",{"instType":"SPOT","instId":INST_ID,"limit":"100"},auth=True)
+    last_buy=last_sell=None
+    for x in d.get("data",[]):
+        side=str(x.get("side","")).lower()
+        try: px=float(x.get("fillPx") or x.get("px") or 0)
+        except Exception: px=0
+        if px<=0: continue
+        if side=="buy" and last_buy is None: last_buy=px
+        if side=="sell" and last_sell is None: last_sell=px
+        if last_buy is not None and last_sell is not None: break
+    state["last_buy_price"]=last_buy; state["last_sell_price"]=last_sell; state["history_loaded"]=True
+
+def order_fill_price(ord_id,fallback):
+    try:
+        x=okx_request("GET","/api/v5/trade/order",{"instId":INST_ID,"ordId":ord_id},auth=True)["data"][0]
+        return float(x.get("avgPx") or x.get("fillPx") or fallback)
+    except Exception:
+        return fallback
+
 def order_usd(px):
     min_sz,_=instrument_rules()
     min_usd=min_sz*px
@@ -74,13 +95,36 @@ def place_market(side,usd,px):
     return item.get("ordId")
 
 def execute(side,level):
+    # Same-side monotonic guard + opposite-side round-trip guard.
+    bp=state.get("last_buy_price"); sp=state.get("last_sell_price")
+    if side=="BUY":
+        if bp is not None and level>bp:
+            state["guard"]=f"BUY blocked: {level:.8f} > previous BUY {bp:.8f}"
+            return False
+        if sp is not None and level>=sp*(1-MIN_ROUNDTRIP_MARGIN):
+            state["guard"]=f"BUY blocked: not safely below previous SELL {sp:.8f}"
+            return False
+    else:
+        if sp is not None and level<sp:
+            state["guard"]=f"SELL blocked: {level:.8f} < previous SELL {sp:.8f}"
+            return False
+        if bp is None:
+            state["guard"]="SELL blocked: no verified prior BUY price"
+            return False
+        if level<=bp*(1+MIN_ROUNDTRIP_MARGIN):
+            state["guard"]=f"SELL blocked: not safely above previous BUY {bp:.8f}"
+            return False
+    state["guard"]=None
     op,usdt=refresh_balances(); usd=order_usd(level)
     if side=="BUY" and usdt<usd: raise RuntimeError("Insufficient LIVE USDT")
     if side=="SELL" and op*level<usd: raise RuntimeError("Insufficient LIVE OP")
     oid=place_market(side.lower(),usd,level)
-    time.sleep(1); refresh_balances()
+    time.sleep(1); fill_px=order_fill_price(oid,level); refresh_balances()
+    if side=="BUY": state["last_buy_price"]=fill_px
+    else: state["last_sell_price"]=fill_px
     state["trades"]+=1; state["buys"]+=side=="BUY"; state["sells"]+=side=="SELL"; state["anchor"]=level
-    state["last_trade"]={"side":side,"trigger_price":level,"usd":usd,"ordId":oid,"time":datetime.now(timezone.utc).isoformat()}
+    state["last_trade"]={"side":side,"trigger_price":level,"fill_price":fill_px,"usd":usd,"ordId":oid,"time":datetime.now(timezone.utc).isoformat()}
+    return True
 
 def worker():
     while True:
@@ -89,14 +133,17 @@ def worker():
             with lock:
                 state["price"]=px; state["error"]=None
                 if API_KEY and SECRET_KEY and PASSPHRASE:
-                    refresh_balances(); state["api_ok"]=True\n                    if not state.get("history_loaded"): load_trade_history()
+                    refresh_balances(); state["api_ok"]=True
+                    if not state.get("history_loaded"): load_trade_history()
                 else:
                     state["api_ok"]=False
                 if state["anchor"] is None:
                     state["anchor"]=px; state["started"]=datetime.now(timezone.utc).isoformat(); state["initial_op"]=state["account_op"]; state["initial_usdt"]=state["account_usdt"]
                 if LIVE_ENABLED and state["api_ok"]:
-                    while px>=state["anchor"]*(1+STEP): execute("SELL",state["anchor"]*(1+STEP))
-                    while px<=state["anchor"]*(1-STEP): execute("BUY",state["anchor"]*(1-STEP))
+                    while px>=state["anchor"]*(1+STEP):
+                        if not execute("SELL",state["anchor"]*(1+STEP)): break
+                    while px<=state["anchor"]*(1-STEP):
+                        if not execute("BUY",state["anchor"]*(1-STEP)): break
         except Exception as e:
             with lock: state["error"]=str(e)[:220]
             print("WORKER ERROR:",state["error"],flush=True)
