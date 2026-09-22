@@ -107,6 +107,16 @@ def snapshot():
         s=dict(state)
         if s["anchor"]:
             s["upper"]=s["anchor"]*(1+STEP); s["lower"]=s["anchor"]*(1-STEP)
+        else:
+            s["upper"]=None; s["lower"]=None
+        if s["price"] is not None:
+            s["op_value"]=s["account_op"]*s["price"]
+            s["total"]=s["account_usdt"]+s["op_value"]
+        else:
+            s["op_value"]=None; s["total"]=None
+        s["pnl"]=None; s["pnl_pct"]=None
+        s["grid_pct"]=STEP*100
+        s["trade_target_usd"]=TRADE_USD
         return s
 
 HTML="""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OP Grid · OKX LIVE</title>
