@@ -10,17 +10,17 @@ lock=threading.Lock()
 OKX_BASE="https://www.okx.com"
 INST_ID="BTC-USDT"
 STEP=0.005
-TRADE_PCT=0.10
+TRADE_USD=2.0
 MIN_TRADE_USD=2.0
-CAPITAL_LIMIT=2000.0
-SIDE_BUDGET=1000.0
+CAPITAL_LIMIT=200.0
+SIDE_BUDGET=100.0
 POLL_SECONDS=5
 
 API_KEY=os.getenv("OKX_API_KEY","")
 SECRET_KEY=os.getenv("OKX_SECRET_KEY","")
 PASSPHRASE=os.getenv("OKX_PASSPHRASE","")
 
-state={"price":None,"anchor":None,"btc":0.0,"usdt":0.0,"account_btc":0.0,"account_usdt":0.0,"initial_total":2000.0,
+state={"price":None,"anchor":None,"btc":0.0,"usdt":0.0,"account_btc":0.0,"account_usdt":0.0,"initial_total":200.0,
        "trades":0,"buys":0,"sells":0,"last_trade":None,"started":None,
        "error":None,"api_ok":False,"mode":"OKX DEMO SPOT"}
 
@@ -83,7 +83,9 @@ def refresh_balances():
 
 def execute(side,level):
     account_btc,account_usdt=refresh_balances()
-    trade_usd=(state["usdt"]*TRADE_PCT) if side=="BUY" else (state["btc"]*level*TRADE_PCT)
+    trade_usd=TRADE_USD
+    if side=="BUY" and state["usdt"] < trade_usd: raise RuntimeError("Bot $200 USDT side exhausted")
+    if side=="SELL" and state["btc"]*level < trade_usd: raise RuntimeError("Bot $200 BTC side exhausted")
     if trade_usd < MIN_TRADE_USD:
         raise RuntimeError(f"{side} size below $2 minimum")
     if side=="BUY" and account_usdt < trade_usd: raise RuntimeError("Insufficient OKX Demo USDT")
@@ -104,7 +106,7 @@ def execute(side,level):
 
 def init(px):
     btc,usdt=refresh_balances()
-    if usdt < SIDE_BUDGET or btc*px < SIDE_BUDGET: raise RuntimeError("OKX Demo needs at least $1000 BTC and $1000 USDT available")
+    if usdt < SIDE_BUDGET or btc*px < SIDE_BUDGET: raise RuntimeError("OKX Demo needs at least $100 BTC and $100 USDT available")
     state["price"]=px; state["anchor"]=px
     state["btc"]=SIDE_BUDGET/px; state["usdt"]=SIDE_BUDGET
     state["initial_total"]=CAPITAL_LIMIT
@@ -127,6 +129,7 @@ def worker():
         except Exception as e:
             with lock:
                 state["error"]=str(e)[:220]
+                print("WORKER ERROR:", state["error"], flush=True)
                 state["api_ok"]=False if state["anchor"] is None else state["api_ok"]
         time.sleep(POLL_SECONDS)
 
@@ -155,15 +158,15 @@ body{margin:0;background:#080b12;color:#eaf0ff;font-family:system-ui,Arial}.wrap
 h1{font-size:22px}.muted{color:#8d98ad}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
 .card{background:#111724;border:1px solid #222d42;border-radius:12px;padding:14px}.v{font-size:22px;font-weight:700;margin-top:6px}
 .pos,.buy{color:#4ade80}.neg,.sell{color:#fb7185}small{color:#8d98ad}</style></head><body><div class="wrap">
-<h1>₿ BTC 0.5% GRID · OKX DEMO</h1><div class="muted">DEMO SPOT BTC-USDT · $2,000 bot cap · 10% dynamic · grid 0.5% · update 5s</div><div id="conn" class="card" style="margin-top:14px">OKX DEMO CONNECTION<div class="v">CHECKING...</div><small>BTC / USDT balance will appear after authentication</small></div>
+<h1>₿ BTC 0.5% GRID · OKX DEMO</h1><div class="muted">DEMO SPOT BTC-USDT · $200 bot cap · fixed $2/order · grid 0.5% · update 5s</div><div id="conn" class="card" style="margin-top:14px">OKX DEMO CONNECTION<div class="v">CHECKING...</div><small>BTC / USDT balance will appear after authentication</small></div>
 <div id="x" style="margin-top:14px">Loading...</div></div><script>
 const n=(x,d=2)=>x==null?'N/A':Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
 async function go(){try{let s=await(await fetch('/api',{cache:'no-store'})).json();let p=s.pnl||0,cl=p>=0?'pos':'neg';
-document.getElementById('conn').innerHTML=`OKX DEMO CONNECTION<div class="v ${s.api_ok&&!s.error?'pos':'neg'}">${s.api_ok&&!s.error?'CONNECTED':'ERROR'}</div><small>${s.api_ok&&!s.error?'Authenticated · BTC '+n(s.btc,8)+' · USDT '+n(s.usdt,4):(s.error||'Connecting...')}</small>`;
+document.getElementById('conn').innerHTML=`OKX DEMO CONNECTION<div class="v ${s.api_ok&&!s.error?'pos':'neg'}">${s.api_ok&&!s.error?'CONNECTED':'ERROR'}</div><small>${s.api_ok&&!s.error?'Authenticated · Account BTC '+n(s.account_btc,8)+' · Account USDT '+n(s.account_usdt,4):(s.error||'Connecting...')}</small>`;
 document.getElementById('x').innerHTML=`<div class="grid">
 <div class="card">BTC PRICE<div class="v">$${n(s.price)}</div></div>
 <div class="card">ANCHOR<div class="v">$${n(s.anchor)}</div><small>Buy ≤ $${n(s.lower)} · Sell ≥ $${n(s.upper)}</small></div>
-<div class="card">BOT $2,000 VALUE<div class="v ${cl}">${n(s.total,4)}</div><small class="${cl}">${p>=0?'+':''}$${n(p,4)} (${n(s.pnl_pct,3)}%) since bot start</small></div>
+<div class="card">BOT $200 VALUE<div class="v ${cl}">${n(s.total,4)}</div><small class="${cl}">${p>=0?'+':''}$${n(p,4)} (${n(s.pnl_pct,3)}%) since bot start</small></div>
 <div class="card">BOT BTC<div class="v">${n(s.btc,8)}</div><small>≈ $${n(s.btc_value,2)}</small></div>
 <div class="card">BOT USDT<div class="v">${n(s.usdt,4)}</div></div>
 <div class="card">BOT ORDERS<div class="v">${s.trades}</div><small><span class="buy">BUY ${s.buys}</span> · <span class="sell">SELL ${s.sells}</span></small></div>
