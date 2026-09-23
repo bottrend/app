@@ -128,7 +128,7 @@ def execute(side,level):
     if side=="SELL" and op*level<usd: raise RuntimeError("Insufficient LIVE OP")
     oid,clid=place_market(side.lower(),usd,level)
     time.sleep(1); fill_px=order_fill_price(oid,level); refresh_balances()
-    state["trades"]+=1; state["buys"]+=side=="BUY"; state["sells"]+=side=="SELL"; state["anchor"]=level
+    state["trades"]+=1; state["buys"]+=side=="BUY"; state["sells"]+=side=="SELL"; state["anchor"]=fill_px
     state["last_trade"]={"side":side,"trigger_price":level,"fill_price":fill_px,"usd":usd,"ordId":oid,"clOrdId":clid,"time":datetime.now(timezone.utc).isoformat()}
     return True
 def worker():
