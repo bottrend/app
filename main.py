@@ -20,7 +20,7 @@ API_KEY=os.getenv("OKX_API_KEY","")
 SECRET_KEY=os.getenv("OKX_SECRET_KEY","")
 PASSPHRASE=os.getenv("OKX_PASSPHRASE","")
 
-state={"price":None,"anchor":None,"account_op":0.0,"account_usdt":0.0,"initial_total":None,"trades":0,"buys":0,"sells":0,
+state={"price":None,"anchor":None,"tick_sz":None,"account_op":0.0,"account_usdt":0.0,"initial_total":None,"trades":0,"buys":0,"sells":0,
 "last_trade":None,"started":None,"error":None,"guard":None,"api_ok":False,"mode":"OKX LIVE SPOT","armed":LIVE_ENABLED}
 
 def iso_ts():
@@ -43,6 +43,7 @@ def okx_request(method,path,params=None,body=None,auth=False):
 
 def instrument_rules():
     x=okx_request("GET","/api/v5/public/instruments",{"instType":"SPOT","instId":INST_ID})["data"][0]
+    state["tick_sz"]=x.get("tickSz")
     return float(x["minSz"]),float(x["lotSz"])
 
 def market_price():
@@ -174,7 +175,7 @@ def snapshot():
         s["anchor_vs_price_pct"]=None if not s["price"] or not s["anchor"] else (s["price"]/s["anchor"]-1)*100
         s["grid_pct"]=STEP*100
         s["trade_target_usd"]=TRADE_USD
-        s["inst_id"]=INST_ID; s["base_ccy"]=BASE_CCY; s["quote_ccy"]=QUOTE_CCY
+        s["inst_id"]=INST_ID; s["base_ccy"]=BASE_CCY; s["quote_ccy"]=QUOTE_CCY; s["tick_sz"]=state.get("tick_sz")
         return s
 
 HTML="""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Grid · OKX LIVE</title>
@@ -182,13 +183,13 @@ HTML="""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" c
 <h1><span id="pairTitle">GRID</span> · OKX LIVE</h1><div class="muted">LIVE SPOT <span id="pairHead">...</span> · Grid <span id="gridHead">...</span> · target $2/order · update 5s</div><div id="conn" class="card" style="margin-top:14px">OKX LIVE CONNECTION<div class="v">CHECKING...</div></div>
 <div id="x" style="margin-top:14px">Loading...</div></div><script>
 const n=(x,d=2)=>x==null?'N/A':Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
-const pd=x=>{if(x==null)return 6;let a=Math.abs(Number(x));if(a>0&&a<0.00001)return 9;if(a<0.001)return 8;if(a<0.1)return 6;return 5};
-const px=x=>n(x,pd(x));
+const tickDigits=t=>{if(t==null)return null;let v=String(t).toLowerCase();if(v.includes('e-'))return Number(v.split('e-')[1]);let q=v.split('.')[1];return q?q.length:0};
+const px=(x,t)=>{let d=tickDigits(t);return n(x,d==null?6:d)};
 async function go(){try{let s=await(await fetch('/api',{cache:'no-store'})).json();let p=s.pnl||0,cl=p>=0?'pos':'neg';
 document.getElementById('gridHead').textContent=n(s.grid_pct,2)+'%'; document.getElementById('pairTitle').textContent=s.base_ccy+' GRID'; document.getElementById('pairHead').textContent=s.inst_id; document.title=s.base_ccy+' Grid · OKX LIVE';\ndocument.getElementById('conn').innerHTML=`OKX LIVE CONNECTION<div class="v ${s.api_ok&&!s.error?'pos':'neg'}">${s.api_ok&&!s.error?'CONNECTED':'ERROR'}</div><small>${s.api_ok?'Account '+s.base_ccy+' '+n(s.account_op,8)+' · '+s.quote_ccy+' '+n(s.account_usdt,4):(s.error||'Waiting for API')}</small><br><small>Trading: <b class="${s.armed?'pos':'neg'}">${s.armed?'LIVE ENABLED':'SAFETY LOCKED'}</b></small>`;
 document.getElementById('x').innerHTML=`<div class="grid">
-<div class="card">${s.base_ccy} PRICE<div class="v">$${px(s.price)}</div></div>
-<div class="card">ANCHOR<div class="v">$${px(s.anchor)}</div><small>Now vs anchor ${s.anchor_vs_price_pct==null?"N/A":(s.anchor_vs_price_pct>=0?"+":"")+n(s.anchor_vs_price_pct,3)+"%"}<br>Buy ≤ ${px(s.lower)} · Sell ≥ ${px(s.upper)}</small></div>
+<div class="card">${s.base_ccy} PRICE<div class="v">$${px(s.price,s.tick_sz)}</div></div>
+<div class="card">ANCHOR<div class="v">$${px(s.anchor,s.tick_sz)}</div><small>Now vs anchor ${s.anchor_vs_price_pct==null?"N/A":(s.anchor_vs_price_pct>=0?"+":"")+n(s.anchor_vs_price_pct,3)+"%"}<br>Buy ≤ ${px(s.lower,s.tick_sz)} · Sell ≥ ${px(s.upper,s.tick_sz)}</small></div>
 <div class="card">GRID<div class="v">${n(s.grid_pct,2)}%</div><small>Target $${n(s.trade_target_usd,2)}/order</small></div>
 <div class="card">ACCOUNT VALUE<div class="v ${cl}">$${n(s.total,4)}</div><small class="${cl}">${s.pnl==null?'P&L starts after API connects':(p>=0?'+':'')+'$'+n(p,4)+' ('+n(s.pnl_pct,3)+'%) since bot start'}</small></div>
 <div class="card">${s.base_ccy} AVAILABLE<div class="v">${n(s.account_op,8)}</div><small>Start ${n(s.initial_op,8)} · Change ${s.op_change==null?"N/A":(s.op_change>=0?"+":"")+n(s.op_change,8)+" "+s.base_ccy} · ≈ ${n(s.op_value,2)}</small></div>
