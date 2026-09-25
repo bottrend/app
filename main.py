@@ -139,6 +139,8 @@ def worker():
     while True:
         try:
             px=market_price()
+            if state.get("tick_sz") is None:
+                instrument_rules()
             with lock:
                 state["price"]=px; state["error"]=None
                 if API_KEY and SECRET_KEY and PASSPHRASE:
