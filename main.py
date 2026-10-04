@@ -12,7 +12,7 @@ _pair=INST_ID.split("-")
 if len(_pair)!=2 or not _pair[0] or not _pair[1]: raise RuntimeError("INST_ID must be a SPOT pair like OP-USDT")
 BASE_CCY,QUOTE_CCY=_pair
 STEP=float(os.getenv("GRID_STEP","0.01"))
-BALANCE_PARTS=float(os.getenv("BALANCE_PARTS","100"))
+TRADE_USD=float(os.getenv("TRADE_USD","2"))
 POLL_SECONDS=int(os.getenv("POLL_SECONDS","5"))
 MIN_ROUNDTRIP_MARGIN=float(os.getenv("MIN_ROUNDTRIP_MARGIN","0.0025"))
 LIVE_ENABLED=os.getenv("LIVE_TRADING_ENABLED","false").lower()=="true"
@@ -67,13 +67,10 @@ def order_fill_price(ord_id,fallback):
     except Exception:
         return fallback
 
-def order_qty(base_balance):
-    min_sz,lot_sz=instrument_rules()
-    qty=base_balance/BALANCE_PARTS
-    if lot_sz>0:
-        qty=math.floor(qty/lot_sz)*lot_sz
-    if qty<min_sz: raise RuntimeError(f"Dynamic order below OKX minimum {min_sz} {BASE_CCY}")
-    return qty
+def order_usd(px):
+    min_sz,_=instrument_rules()
+    min_usd=min_sz*px
+    return TRADE_USD if min_usd < TRADE_USD else min_usd*1.01
 
 def get_order_by_client_id(clid):
     try:
@@ -82,15 +79,16 @@ def get_order_by_client_id(clid):
     except Exception:
         return None
 
-def place_market(side,qty,px):
+def place_market(side,usd,px):
     if not LIVE_ENABLED: raise RuntimeError("LIVE trading safety lock is OFF")
     min_sz,lot_sz=instrument_rules()
     # Unique client ID makes an ambiguous submit reconcilable and prevents blind duplicate retries.
     clid=("grd"+uuid.uuid4().hex)[:32]
-    if qty<min_sz: raise RuntimeError(f"Dynamic order below OKX minimum {min_sz} {BASE_CCY}")
     if side=="buy":
-        body={"instId":INST_ID,"tdMode":"cash","side":"buy","ordType":"market","sz":f"{qty:.8f}","tgtCcy":"base_ccy","clOrdId":clid}
+        body={"instId":INST_ID,"tdMode":"cash","side":"buy","ordType":"market","sz":f"{usd:.8f}","tgtCcy":"quote_ccy","clOrdId":clid}
     else:
+        qty=max(usd/px,min_sz)
+        if lot_sz>0: qty=math.ceil(qty/lot_sz)*lot_sz
         body={"instId":INST_ID,"tdMode":"cash","side":"sell","ordType":"market","sz":f"{qty:.8f}","tgtCcy":"base_ccy","clOrdId":clid}
     try:
         item=okx_request("POST","/api/v5/trade/order",body=body,auth=True)["data"][0]
@@ -129,13 +127,13 @@ def execute(side,level):
                     state["guard"]=f"SELL blocked: not safely above previous BUY {prev_px:.8f}"
                     return False
     state["guard"]=None
-    op,usdt=refresh_balances(); qty=order_qty(op); usd=qty*level
+    op,usdt=refresh_balances(); usd=order_usd(level)
     if side=="BUY" and usdt<usd: raise RuntimeError(f"Insufficient LIVE {QUOTE_CCY}")
-    if side=="SELL" and op<qty: raise RuntimeError(f"Insufficient LIVE {BASE_CCY}")
-    oid,clid=place_market(side.lower(),qty,level)
+    if side=="SELL" and op*level<usd: raise RuntimeError(f"Insufficient LIVE {BASE_CCY}")
+    oid,clid=place_market(side.lower(),usd,level)
     time.sleep(1); fill_px=order_fill_price(oid,level); refresh_balances()
     state["trades"]+=1; state["buys"]+=side=="BUY"; state["sells"]+=side=="SELL"; state["anchor"]=fill_px
-    state["last_trade"]={"side":side,"trigger_price":level,"fill_price":fill_px,"usd":usd,"qty":qty,"ordId":oid,"clOrdId":clid,"time":datetime.now(timezone.utc).isoformat()}
+    state["last_trade"]={"side":side,"trigger_price":level,"fill_price":fill_px,"usd":usd,"ordId":oid,"clOrdId":clid,"time":datetime.now(timezone.utc).isoformat()}
     return True
 def worker():
     while True:
@@ -178,35 +176,30 @@ def snapshot():
         s["usdt_change"]=None if s.get("initial_usdt") is None else s["account_usdt"]-s["initial_usdt"]
         s["anchor_vs_price_pct"]=None if not s["price"] or not s["anchor"] else (s["price"]/s["anchor"]-1)*100
         s["grid_pct"]=STEP*100
-        s["balance_parts"]=BALANCE_PARTS
-        s["next_order_qty"]=order_qty(s["account_op"]) if s["account_op"]>0 else None
+        s["trade_target_usd"]=TRADE_USD
         s["inst_id"]=INST_ID; s["base_ccy"]=BASE_CCY; s["quote_ccy"]=QUOTE_CCY; s["tick_sz"]=state.get("tick_sz")
         return s
 
-HTML="""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OKX Grid Bot</title>
-<style>
-*{box-sizing:border-box}body{margin:0;background:#090d16;color:#eef3ff;font-family:Inter,system-ui,Arial,sans-serif}.wrap{max-width:980px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.title{font-size:25px;font-weight:800}.sub,.muted,small{color:#8e9ab0}.badge{padding:8px 13px;border-radius:999px;font-weight:800;border:1px solid #27334a}.live{color:#4ade80;background:#10261c}.off{color:#fb7185;background:#2a151b}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:11px;margin-top:15px}.card{background:#111827;border:1px solid #243149;border-radius:14px;padding:15px;min-height:100px}.label{font-size:12px;color:#8e9ab0;font-weight:700;letter-spacing:.06em}.v{font-size:22px;font-weight:800;margin-top:7px}.buy,.pos{color:#4ade80}.sell,.neg{color:#fb7185}.wide{grid-column:span 2}.status{margin-top:12px;padding:12px 14px;background:#111827;border:1px solid #243149;border-radius:12px;font-size:13px}@media(max-width:520px){.wrap{padding:14px}.title{font-size:21px}.wide{grid-column:span 1}.v{font-size:19px}}
-</style></head><body><div class="wrap"><div class="top"><div><div class="title"><span id="pair">GRID</span> · OKX</div><div class="sub">Spot Grid · <span id="gridHead">...</span> · dynamic balance sizing</div></div><div id="badge" class="badge off">CHECKING</div></div><div id="x">Loading...</div></div>
-<script>
+HTML="""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Grid · OKX LIVE</title>
+<style>body{margin:0;background:#080b12;color:#eaf0ff;font-family:system-ui,Arial}.wrap{max-width:900px;margin:auto;padding:20px}h1{font-size:22px}.muted{color:#8d98ad}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.card{background:#111724;border:1px solid #222d42;border-radius:12px;padding:14px}.v{font-size:22px;font-weight:700;margin-top:6px}.pos,.buy{color:#4ade80}.neg,.sell{color:#fb7185}small{color:#8d98ad}</style></head><body><div class="wrap">
+<h1><span id="pairTitle">GRID</span> · OKX LIVE</h1><div class="muted">LIVE SPOT <span id="pairHead">...</span> · Grid <span id="gridHead">...</span> · target $2/order · update 5s</div><div id="conn" class="card" style="margin-top:14px">OKX LIVE CONNECTION<div class="v">CHECKING...</div></div>
+<div id="x" style="margin-top:14px">Loading...</div></div><script>
 const n=(x,d=2)=>x==null?'N/A':Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
 const tickDigits=t=>{if(t==null)return null;let v=String(t).toLowerCase();if(v.includes('e-'))return Number(v.split('e-')[1]);let q=v.split('.')[1];return q?q.length:0};
 const px=(x,t)=>{let d=tickDigits(t);return n(x,d==null?6:d)};
-async function go(){try{let s=await(await fetch('/api',{cache:'no-store'})).json();let b=document.getElementById('badge');document.getElementById('pair').textContent=s.inst_id;document.getElementById('gridHead').textContent=n(s.grid_pct,2)+'%';document.title=s.inst_id+' · OKX Grid';b.className='badge '+(s.armed?'live':'off');b.textContent=s.armed?'LIVE':'SAFETY LOCKED';
-let p=s.pnl||0,cl=p>=0?'pos':'neg';document.getElementById('x').innerHTML=`<div class="grid">
-<div class="card"><div class="label">${s.quote_ccy} BALANCE</div><div class="v">${n(s.account_usdt,4)}</div><small>${s.quote_ccy}</small></div>
-<div class="card"><div class="label">${s.base_ccy} BALANCE</div><div class="v">${n(s.account_op,8)}</div><small>≈ ${n(s.op_value,2)} ${s.quote_ccy}</small></div>
-<div class="card"><div class="label">CURRENT PRICE</div><div class="v">${px(s.price,s.tick_sz)}</div><small>${s.quote_ccy}/${s.base_ccy}</small></div>
-<div class="card"><div class="label">ANCHOR</div><div class="v">${px(s.anchor,s.tick_sz)}</div><small>${s.anchor_vs_price_pct==null?'N/A':(s.anchor_vs_price_pct>=0?'+':'')+n(s.anchor_vs_price_pct,3)+'%'} vs current</small></div>
-<div class="card"><div class="label buy">BUY ≤</div><div class="v buy">${px(s.lower,s.tick_sz)}</div></div>
-<div class="card"><div class="label sell">SELL ≥</div><div class="v sell">${px(s.upper,s.tick_sz)}</div></div>
-<div class="card"><div class="label">GRID</div><div class="v">${n(s.grid_pct,2)}%</div></div>
-<div class="card"><div class="label">NEXT ORDER SIZE</div><div class="v">${n(s.next_order_qty,8)}</div><small>${s.base_ccy} balance / ${n(s.balance_parts,0)}</small></div>
-<div class="card wide"><div class="label">TOTAL VALUE</div><div class="v">${n(s.total,4)} ${s.quote_ccy}</div><small>Mark-to-market at current price</small></div>
-<div class="card"><div class="label">BUY COUNT</div><div class="v buy">${s.buys}</div></div>
-<div class="card"><div class="label">SELL COUNT</div><div class="v sell">${s.sells}</div></div>
-<div class="card"><div class="label">TOTAL ORDERS</div><div class="v">${s.trades}</div></div>
-<div class="card wide"><div class="label">LAST TRADE</div><div class="v ${s.last_trade?.side==='BUY'?'buy':'sell'}">${s.last_trade?s.last_trade.side+' '+n(s.last_trade.qty,8)+' '+s.base_ccy+' @ '+px(s.last_trade.fill_price,s.tick_sz):'None'}</div><small>${s.last_trade?'~'+n(s.last_trade.usd,4)+' '+s.quote_ccy+' · '+s.last_trade.ordId:'Waiting for grid trigger'}</small></div>
-</div><div class="status">API: <b class="${s.api_ok?'pos':'neg'}">${s.api_ok?'CONNECTED':'NOT CONNECTED'}</b> · Guard: ${s.guard||'none'} · Last error: ${s.error||'none'}<br><span class="muted">Started: ${s.started||'N/A'}</span></div>`; }catch(e){}}
+async function go(){try{let s=await(await fetch('/api',{cache:'no-store'})).json();let p=s.pnl||0,cl=p>=0?'pos':'neg';
+document.getElementById('gridHead').textContent=n(s.grid_pct,2)+'%'; document.getElementById('pairTitle').textContent=s.base_ccy+' GRID'; document.getElementById('pairHead').textContent=s.inst_id; document.title=s.base_ccy+' Grid · OKX LIVE';\ndocument.getElementById('conn').innerHTML=`OKX LIVE CONNECTION<div class="v ${s.api_ok&&!s.error?'pos':'neg'}">${s.api_ok&&!s.error?'CONNECTED':'ERROR'}</div><small>${s.api_ok?'Account '+s.base_ccy+' '+n(s.account_op,8)+' · '+s.quote_ccy+' '+n(s.account_usdt,4):(s.error||'Waiting for API')}</small><br><small>Trading: <b class="${s.armed?'pos':'neg'}">${s.armed?'LIVE ENABLED':'SAFETY LOCKED'}</b></small>`;
+document.getElementById('x').innerHTML=`<div class="grid">
+<div class="card">${s.base_ccy} PRICE<div class="v">$${px(s.price,s.tick_sz)}</div></div>
+<div class="card">ANCHOR<div class="v">$${px(s.anchor,s.tick_sz)}</div><small>Now vs anchor ${s.anchor_vs_price_pct==null?"N/A":(s.anchor_vs_price_pct>=0?"+":"")+n(s.anchor_vs_price_pct,3)+"%"}<br>Buy ≤ ${px(s.lower,s.tick_sz)} · Sell ≥ ${px(s.upper,s.tick_sz)}</small></div>
+<div class="card">GRID<div class="v">${n(s.grid_pct,2)}%</div><small>Target $${n(s.trade_target_usd,2)}/order</small></div>
+<div class="card">ACCOUNT VALUE<div class="v ${cl}">$${n(s.total,4)}</div><small class="${cl}">${s.pnl==null?'P&L starts after API connects':(p>=0?'+':'')+'$'+n(p,4)+' ('+n(s.pnl_pct,3)+'%) since bot start'}</small></div>
+<div class="card">${s.base_ccy} AVAILABLE<div class="v">${n(s.account_op,8)}</div><small>Start ${n(s.initial_op,8)} · Change ${s.op_change==null?"N/A":(s.op_change>=0?"+":"")+n(s.op_change,8)+" "+s.base_ccy} · ≈ ${n(s.op_value,2)}</small></div>
+<div class="card">${s.quote_ccy} AVAILABLE<div class="v">${n(s.account_usdt,4)}</div><small>Start ${n(s.initial_usdt,4)} · Change ${s.usdt_change==null?"N/A":(s.usdt_change>=0?"+":"")+n(s.usdt_change,4)+" "+s.quote_ccy}</small></div>
+<div class="card">ORDERS<div class="v">${s.trades}</div><small><span class="buy">BUY ${s.buys}</span> · <span class="sell">SELL ${s.sells}</span></small></div>
+<div class="card">LAST ORDER<div class="v ${s.last_trade?.side==='BUY'?'buy':'sell'}">${s.last_trade?s.last_trade.side:'N/A'}</div><small>${s.last_trade?'~$'+n(s.last_trade.usd,2)+' · OKX '+s.last_trade.ordId:'Waiting for grid trigger'}</small></div>
+<div class="card">STARTED<div class="v" style="font-size:14px">${s.started||'N/A'}</div><small>Mode: ${s.mode}</small></div>
+</div><p class="muted">Status: ${s.error?'ERROR · '+s.error:(s.guard?'PROTECTED · '+s.guard:(s.api_ok?'CONNECTED · OKX LIVE':'Waiting for API'))}</p>`; }catch(e){}}
 go();setInterval(go,5000);</script></body></html>"""
 
 @app.get("/")
