@@ -13,6 +13,7 @@ if len(_pair)!=2 or not _pair[0] or not _pair[1]: raise RuntimeError("INST_ID mu
 BASE_CCY,QUOTE_CCY=_pair
 STEP=float(os.getenv("GRID_STEP","0.01"))
 TRADE_USD=float(os.getenv("TRADE_USD","2"))
+BALANCE_PARTS=float(os.getenv("BALANCE_PARTS","100"))
 POLL_SECONDS=int(os.getenv("POLL_SECONDS","5"))
 MIN_ROUNDTRIP_MARGIN=float(os.getenv("MIN_ROUNDTRIP_MARGIN","0.0025"))
 LIVE_ENABLED=os.getenv("LIVE_TRADING_ENABLED","false").lower()=="true"
@@ -67,10 +68,15 @@ def order_fill_price(ord_id,fallback):
     except Exception:
         return fallback
 
-def order_usd(px):
-    min_sz,_=instrument_rules()
-    min_usd=min_sz*px
-    return TRADE_USD if min_usd < TRADE_USD else min_usd*1.01
+def order_qty(base_balance):
+    min_sz,lot_sz=instrument_rules()
+    qty=base_balance/BALANCE_PARTS
+    if lot_sz>0:
+        qty=math.floor(qty/lot_sz)*lot_sz
+    return max(qty,min_sz)
+
+def order_usd(px,base_balance):
+    return order_qty(base_balance)*px
 
 def get_order_by_client_id(clid):
     try:
@@ -79,16 +85,15 @@ def get_order_by_client_id(clid):
     except Exception:
         return None
 
-def place_market(side,usd,px):
+def place_market(side,qty,px):
     if not LIVE_ENABLED: raise RuntimeError("LIVE trading safety lock is OFF")
     min_sz,lot_sz=instrument_rules()
     # Unique client ID makes an ambiguous submit reconcilable and prevents blind duplicate retries.
     clid=("grd"+uuid.uuid4().hex)[:32]
+    if qty<min_sz: raise RuntimeError(f"Dynamic order below OKX minimum {min_sz} {BASE_CCY}")
     if side=="buy":
-        body={"instId":INST_ID,"tdMode":"cash","side":"buy","ordType":"market","sz":f"{usd:.8f}","tgtCcy":"quote_ccy","clOrdId":clid}
+        body={"instId":INST_ID,"tdMode":"cash","side":"buy","ordType":"market","sz":f"{qty:.8f}","tgtCcy":"base_ccy","clOrdId":clid}
     else:
-        qty=max(usd/px,min_sz)
-        if lot_sz>0: qty=math.ceil(qty/lot_sz)*lot_sz
         body={"instId":INST_ID,"tdMode":"cash","side":"sell","ordType":"market","sz":f"{qty:.8f}","tgtCcy":"base_ccy","clOrdId":clid}
     try:
         item=okx_request("POST","/api/v5/trade/order",body=body,auth=True)["data"][0]
@@ -127,13 +132,13 @@ def execute(side,level):
                     state["guard"]=f"SELL blocked: not safely above previous BUY {prev_px:.8f}"
                     return False
     state["guard"]=None
-    op,usdt=refresh_balances(); usd=order_usd(level)
+    op,usdt=refresh_balances(); qty=order_qty(op); usd=qty*level
     if side=="BUY" and usdt<usd: raise RuntimeError(f"Insufficient LIVE {QUOTE_CCY}")
-    if side=="SELL" and op*level<usd: raise RuntimeError(f"Insufficient LIVE {BASE_CCY}")
-    oid,clid=place_market(side.lower(),usd,level)
+    if side=="SELL" and op<qty: raise RuntimeError(f"Insufficient LIVE {BASE_CCY}")
+    oid,clid=place_market(side.lower(),qty,level)
     time.sleep(1); fill_px=order_fill_price(oid,level); refresh_balances()
     state["trades"]+=1; state["buys"]+=side=="BUY"; state["sells"]+=side=="SELL"; state["anchor"]=fill_px
-    state["last_trade"]={"side":side,"trigger_price":level,"fill_price":fill_px,"usd":usd,"ordId":oid,"clOrdId":clid,"time":datetime.now(timezone.utc).isoformat()}
+    state["last_trade"]={"side":side,"trigger_price":level,"fill_price":fill_px,"usd":usd,"qty":qty,"ordId":oid,"clOrdId":clid,"time":datetime.now(timezone.utc).isoformat()}
     return True
 def worker():
     while True:
@@ -177,12 +182,14 @@ def snapshot():
         s["anchor_vs_price_pct"]=None if not s["price"] or not s["anchor"] else (s["price"]/s["anchor"]-1)*100
         s["grid_pct"]=STEP*100
         s["trade_target_usd"]=TRADE_USD
+        s["balance_parts"]=BALANCE_PARTS
+        s["next_order_qty"]=order_qty(s["account_op"]) if s["account_op"]>0 else None
         s["inst_id"]=INST_ID; s["base_ccy"]=BASE_CCY; s["quote_ccy"]=QUOTE_CCY; s["tick_sz"]=state.get("tick_sz")
         return s
 
 HTML="""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Grid · OKX LIVE</title>
 <style>body{margin:0;background:#080b12;color:#eaf0ff;font-family:system-ui,Arial}.wrap{max-width:900px;margin:auto;padding:20px}h1{font-size:22px}.muted{color:#8d98ad}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.card{background:#111724;border:1px solid #222d42;border-radius:12px;padding:14px}.v{font-size:22px;font-weight:700;margin-top:6px}.pos,.buy{color:#4ade80}.neg,.sell{color:#fb7185}small{color:#8d98ad}</style></head><body><div class="wrap">
-<h1><span id="pairTitle">GRID</span> · OKX LIVE</h1><div class="muted">LIVE SPOT <span id="pairHead">...</span> · Grid <span id="gridHead">...</span> · target $2/order · update 5s</div><div id="conn" class="card" style="margin-top:14px">OKX LIVE CONNECTION<div class="v">CHECKING...</div></div>
+<h1><span id="pairTitle">GRID</span> · OKX LIVE</h1><div class="muted">LIVE SPOT <span id="pairHead">...</span> · Grid <span id="gridHead">...</span> · dynamic balance sizing · update 5s</div><div id="conn" class="card" style="margin-top:14px">OKX LIVE CONNECTION<div class="v">CHECKING...</div></div>
 <div id="x" style="margin-top:14px">Loading...</div></div><script>
 const n=(x,d=2)=>x==null?'N/A':Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
 const tickDigits=t=>{if(t==null)return null;let v=String(t).toLowerCase();if(v.includes('e-'))return Number(v.split('e-')[1]);let q=v.split('.')[1];return q?q.length:0};
@@ -192,7 +199,7 @@ document.getElementById('gridHead').textContent=n(s.grid_pct,2)+'%'; document.ge
 document.getElementById('x').innerHTML=`<div class="grid">
 <div class="card">${s.base_ccy} PRICE<div class="v">$${px(s.price,s.tick_sz)}</div></div>
 <div class="card">ANCHOR<div class="v">$${px(s.anchor,s.tick_sz)}</div><small>Now vs anchor ${s.anchor_vs_price_pct==null?"N/A":(s.anchor_vs_price_pct>=0?"+":"")+n(s.anchor_vs_price_pct,3)+"%"}<br>Buy ≤ ${px(s.lower,s.tick_sz)} · Sell ≥ ${px(s.upper,s.tick_sz)}</small></div>
-<div class="card">GRID<div class="v">${n(s.grid_pct,2)}%</div><small>Target $${n(s.trade_target_usd,2)}/order</small></div>
+<div class="card">GRID<div class="v">${n(s.grid_pct,2)}%</div><small>Order size: ${s.base_ccy} balance / ${n(s.balance_parts,0)} · next ≈ ${n(s.next_order_qty,8)} ${s.base_ccy}</small></div>
 <div class="card">ACCOUNT VALUE<div class="v ${cl}">$${n(s.total,4)}</div><small class="${cl}">${s.pnl==null?'P&L starts after API connects':(p>=0?'+':'')+'$'+n(p,4)+' ('+n(s.pnl_pct,3)+'%) since bot start'}</small></div>
 <div class="card">${s.base_ccy} AVAILABLE<div class="v">${n(s.account_op,8)}</div><small>Start ${n(s.initial_op,8)} · Change ${s.op_change==null?"N/A":(s.op_change>=0?"+":"")+n(s.op_change,8)+" "+s.base_ccy} · ≈ ${n(s.op_value,2)}</small></div>
 <div class="card">${s.quote_ccy} AVAILABLE<div class="v">${n(s.account_usdt,4)}</div><small>Start ${n(s.initial_usdt,4)} · Change ${s.usdt_change==null?"N/A":(s.usdt_change>=0?"+":"")+n(s.usdt_change,4)+" "+s.quote_ccy}</small></div>
