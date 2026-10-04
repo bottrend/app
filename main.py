@@ -12,7 +12,6 @@ _pair=INST_ID.split("-")
 if len(_pair)!=2 or not _pair[0] or not _pair[1]: raise RuntimeError("INST_ID must be a SPOT pair like OP-USDT")
 BASE_CCY,QUOTE_CCY=_pair
 STEP=float(os.getenv("GRID_STEP","0.01"))
-TRADE_USD=float(os.getenv("TRADE_USD","2"))
 BALANCE_PARTS=float(os.getenv("BALANCE_PARTS","100"))
 POLL_SECONDS=int(os.getenv("POLL_SECONDS","5"))
 MIN_ROUNDTRIP_MARGIN=float(os.getenv("MIN_ROUNDTRIP_MARGIN","0.0025"))
@@ -73,10 +72,8 @@ def order_qty(base_balance):
     qty=base_balance/BALANCE_PARTS
     if lot_sz>0:
         qty=math.floor(qty/lot_sz)*lot_sz
-    return max(qty,min_sz)
-
-def order_usd(px,base_balance):
-    return order_qty(base_balance)*px
+    if qty<min_sz: raise RuntimeError(f"Dynamic order below OKX minimum {min_sz} {BASE_CCY}")
+    return qty
 
 def get_order_by_client_id(clid):
     try:
@@ -181,7 +178,6 @@ def snapshot():
         s["usdt_change"]=None if s.get("initial_usdt") is None else s["account_usdt"]-s["initial_usdt"]
         s["anchor_vs_price_pct"]=None if not s["price"] or not s["anchor"] else (s["price"]/s["anchor"]-1)*100
         s["grid_pct"]=STEP*100
-        s["trade_target_usd"]=TRADE_USD
         s["balance_parts"]=BALANCE_PARTS
         s["next_order_qty"]=order_qty(s["account_op"]) if s["account_op"]>0 else None
         s["inst_id"]=INST_ID; s["base_ccy"]=BASE_CCY; s["quote_ccy"]=QUOTE_CCY; s["tick_sz"]=state.get("tick_sz")
@@ -210,7 +206,7 @@ let p=s.pnl||0,cl=p>=0?'pos':'neg';document.getElementById('x').innerHTML=`<div 
 <div class="card"><div class="label">SELL COUNT</div><div class="v sell">${s.sells}</div></div>
 <div class="card"><div class="label">TOTAL ORDERS</div><div class="v">${s.trades}</div></div>
 <div class="card wide"><div class="label">LAST TRADE</div><div class="v ${s.last_trade?.side==='BUY'?'buy':'sell'}">${s.last_trade?s.last_trade.side+' '+n(s.last_trade.qty,8)+' '+s.base_ccy+' @ '+px(s.last_trade.fill_price,s.tick_sz):'None'}</div><small>${s.last_trade?'~'+n(s.last_trade.usd,4)+' '+s.quote_ccy+' · '+s.last_trade.ordId:'Waiting for grid trigger'}</small></div>
-</div><div class="status">API: <b class="${s.api_ok?'pos':'neg'}">${s.api_ok?'CONNECTED':'NOT CONNECTED'}</b> · Pending: NO · Guard: ${s.guard||'none'} · Last error: ${s.error||'none'}<br><span class="muted">Started: ${s.started||'N/A'}</span></div>`; }catch(e){}}
+</div><div class="status">API: <b class="${s.api_ok?'pos':'neg'}">${s.api_ok?'CONNECTED':'NOT CONNECTED'}</b> · Guard: ${s.guard||'none'} · Last error: ${s.error||'none'}<br><span class="muted">Started: ${s.started||'N/A'}</span></div>`; }catch(e){}}
 go();setInterval(go,5000);</script></body></html>"""
 
 @app.get("/")
